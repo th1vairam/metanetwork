@@ -25,7 +25,6 @@ library(biomaRt)
 # Needs the dev branch
 library(rGithubClient)
 
-
 # login to synapse
 synapseLogin()
 ############################################################################################################
@@ -184,7 +183,7 @@ NODE_OBJ@annotations$fileType = 'tsv'
 try({
   NODE_OBJ@annotations$vcount = vcount(g)
   NODE_OBJ@annotations$ecount = ecount(g)
-  NODE_OBJ@annotations$avgClusteringCoefficient = avgClusteringCoefficient
+  #NODE_OBJ@annotations$avgClusteringCoefficient = avgClusteringCoefficient
   NODE_OBJ@annotations$avgNodeDegree = avgNodeDegree
   NODE_OBJ@annotations$avgPathLength = avgPathLength
   NODE_OBJ@annotations$centralisation = centralisation
