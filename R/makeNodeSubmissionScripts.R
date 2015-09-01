@@ -14,9 +14,10 @@ library(synapseClient)
 synapseLogin()
 
 # Get all files and folder
-Data.Files = synQuery('select * from file where projectId=="syn2397881" and fileType == "rda"', blockSize = 100)
+Data.Files = synQuery('select * from file where projectId=="syn2397881" and fileType == "rda" and sparsityMethod != "correlationFDR" and sparsityMethod != "wgcna"', blockSize = 100)
 Data.Files = Data.Files$collectAll()
-Node.Files = synQuery('select id, name, disease, density from file where projectId=="syn2397881" and fileType == "tsv"', blockSize = 100)
+
+Node.Files = synQuery('select id, name, disease, density from file where projectId=="syn2397881" and fileType == "tsv" and sparsityMethod != "correlationFDR" and sparsityMethod != "wgcna"', blockSize = 100)
 Node.Files = Node.Files$collectAll()
 Node.Files = Node.Files[!is.na(Node.Files$file.density),]
 
