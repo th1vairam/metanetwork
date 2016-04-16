@@ -48,8 +48,9 @@ activityDescription = 'Clustering network genes in to modules using fast greedy 
 
 # Get network from synapse (rda format)
 NET_OBJ = synapseClient::synGet(args[1])
-FNAME = tools::file_path_sans_ext(NET_OBJ$properties$name) %>%
-  gsub('Networks','Modules',.)
+FNAME = args[2]
+#tools::file_path_sans_ext(NET_OBJ$properties$name) %>%
+#  gsub('Networks','Modules',.)
 
 # Load bic networks
 load(NET_OBJ@filePath)
@@ -83,7 +84,7 @@ obj = Folder(name = 'Modules', parentId = NET_OBJ$properties$parentId)
 obj = synStore(obj)
 
 write.table(geneModules, paste(FNAME,'tsv',sep='.'), sep='\t', row.names=F, quote=F)
-MOD_OBJ = File(paste(FNAME,'tsv',sep='.'), name = FNAME, parentId = obj$properties$id)
+MOD_OBJ = File(paste(FNAME,'tsv',sep='.'), name = 'BIC Rank Consensus', parentId = obj$properties$id)
 annotations(MOD_OBJ) = annotations(NET_OBJ)
 MOD_OBJ@annotations$fileType = 'tsv'
 MOD_OBJ@annotations$moduleMethod = paste('igraph',algorithm(mod),sep=':')
