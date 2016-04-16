@@ -24,7 +24,7 @@ network.files = synQuery('select * from file where projectId == "syn5584871" and
   
 # Get finished modules
 module.files = synQuery('select * from file where projectId == "syn5584871" and analysisType == "statisticalNetworkReconstruction" and method == "bic" and organism == "HomoSapiens" and moduleMethod == "igraph:fast greedy"') 
-if (!is.null(module.files){
+if (!is.null(module.files)){
   module.files = module.files %>%
     dplyr::mutate(uniqueName = paste(file.disease, file.tissueTypeAbrv, file.study, file.cogdx, sep = '.'))
   
@@ -38,7 +38,7 @@ fp_all = file(paste('sgeModuleSubmissions/allSubmissions.sh'),'w+')
 cat('#!/bin/bash',file=fp_all,sep='\n')
 close(fp_all)
 
-for (i in dim(network.files)[1]){
+for (i in 1:dim(network.files)[1]){
   id = network.files$file.id[i]
   FNAME = network.files$uniqueName[i]
   fp = file (paste('/shared/Github/metanetwork/R/sgeModuleSubmissions/SUB',id,sep='.'), "w+")
