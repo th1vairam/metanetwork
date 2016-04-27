@@ -87,7 +87,7 @@ geneModules = igraph::membership(mod) %>% unclass %>%
 
 filteredModules = geneModules %>% 
   group_by(moduleNumber) %>%
-  summarise(counts = n()) %>%
+  summarise(counts = length(unique(EnsembleID))) %>%
   filter(counts >= 20)
 
 geneModules$moduleNumber[!(geneModules$moduleNumber %in% filteredModules$moduleNumber)] = 0
