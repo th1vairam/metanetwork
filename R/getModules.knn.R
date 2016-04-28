@@ -1,0 +1,112 @@
+#!/usr/bin/env Rscript
+
+# Function to get modules from network adjacency matrix (from synapse as rda file)
+# All algorithms implemented here are the part of MEGENA R package (http://research.mssm.edu/multiscalenetwork/packages/MEGENA_1.1.tar.gz)
+# Get arguments from comman line
+args = commandArgs(TRUE) # args[1] = Synapse id of network file, args[2] = filename, args[3] = algorithm name
+
+# Clear R console screen output
+cat("\014")
+
+# Set library and working directory
+.libPaths('/shared/rlibs')
+setwd('/shared/Github/metanetwork/R')
+
+# Load libraries
+library(synapseClient)
+library(dplyr)
+library(WGCNA)
+library(tools)
+library(stringr)
+library(igraph)
+library(CovariateAnalysis)
+library(MEGENA)
+library(data.table)
+
+# Needs the dev branch
+library(githubr)
+
+# Login to synapse
+key = read.table('/shared/synapseAPIToken')
+synapseLogin(username = 'th_vairam',
+             apiKey = key$V1)
+
+# Get github links for provenance
+thisFileName1 = 'makeModuleSubmissionScripts.R'
+thisFileName2 = 'getModules.knn.R'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/metanetwork", 
+                    ref="branch", 
+                    refName='modules')
+
+thisFile1 <- getPermlink(repository = thisRepo,
+                         repositoryPath=paste0('R/', thisFileName1))
+thisFile2 <- getPermlink(repository = thisRepo,
+                         repositoryPath=paste0('R/', thisFileName2))
+
+# Synapse specific parameters
+activityName = 'Module Identification'
+activityDescription = 'Clustering network genes in to modules using k-nearest neighborhood algorithm'
+
+# Get network from synapse (rda format)
+NET_OBJ = synapseClient::synGet(args[1])
+FNAME = paste(args[2],args[3],sep='.')
+
+# Load bic networks
+load(NET_OBJ@filePath)
+
+# Convert lsparseNetwork to igraph graph object
+g = igraph::graph.adjacency(as(bicNetworks$rankConsensus$network, 'dMatrix'), 
+                            mode = 'upper', weighted = T, diag = F)
+el = igraph::as_data_frame(g, what = 'edges')
+g <- graph.data.frame(el, directed = F)
+gc()
+
+# Get modules
+mod.output = MEGENA::nested.kmeans.all(g, single.size = 20, k.max = 50)
+names(mod.output$modules) = 1:length(mod.output$modules)
+mod.output$modules[['0']] =  unlist(mod.output$singletons)
+geneModules = mod.output$modules %>%
+  lapply(rownameToFirstColumn, 'x') %>%
+  rbindlist(idcol = 'moduleNumber') %>%
+  dplyr::rename(EnsembleID = DF) %>%
+  dplyr::select(-x)
+gc()
+
+# Add in missing nodes from the algorithm to grey module
+geneModules = rbindlist(list(geneModules,
+                             data.frame(EnsembleID = setdiff(V(g)$name, geneModules$EnsembleID),
+                                        moduleNumber = 0)), use.names=T)
+
+mod = as.numeric(geneModules$moduleNumber)
+names(mod) = geneModules$EnsembleID
+
+# Change cluster number to color labels
+geneModules$moduleLabel = WGCNA::labels2colors(as.numeric(geneModules$moduleNumber))
+
+# Write results to synapse
+# Create a folder for module results
+obj = Folder(name = 'Modules', parentId = NET_OBJ$properties$parentId)
+obj = synStore(obj)
+
+write.table(geneModules, paste(FNAME,'tsv',sep='.'), sep='\t', row.names=F, quote=F)
+MOD_OBJ = File(paste(FNAME,'tsv',sep='.'), 
+               name = paste('BIC Rank Consensus', 'knn'), 
+               parentId = obj$properties$id)
+annotations(MOD_OBJ) = annotations(NET_OBJ)
+MOD_OBJ@annotations$fileType = 'tsv'
+MOD_OBJ@annotations$analysisType = 'moduleIdentification'
+MOD_OBJ@annotations$moduleMethod = paste('MEGENA', args[3], sep=':')
+
+MOD_OBJ@annotations$modularity = modularity(g, mod+1)
+
+MOD_OBJ = synStore(MOD_OBJ, 
+                   executed = list(thisFile1, thisFile2),
+                   used = NET_OBJ,
+                   activityName = activityName,
+                   activityDescription = activityDescription)
+
+# Write completed files to synapse
+write.table(MOD_OBJ$properties$id, file = 'CompletedModuleIDs.txt', sep='\n', append=T, quote=F, col.names=F, row.names=F)
+writeLines(paste('Completed',FNAME,'and stored in',MOD_OBJ$properties$id))
