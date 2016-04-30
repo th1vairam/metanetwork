@@ -22,7 +22,6 @@ synapseLogin(username = 'th_vairam',
 network.files = synQuery('select * from file where projectId == "syn5584871" and analysisType == "statisticalNetworkReconstruction" and method == "bic" and organism == "HomoSapiens"') %>%
   dplyr::filter(file.cogdx == 1 | file.disease == 'Control') %>%
   dplyr::mutate(uniqueName = paste(file.disease, file.tissueTypeAbrv, file.study, file.cogdx, sep = '.'))
-args = c(network.files$file.id[1], network.files$uniqueName[1], 'knn')
 
 # Get finished modules
 module.files = synQuery('select * from file where projectId == "syn5584871" and analysisType == "moduleIdentification" and method == "bic" and organism == "HomoSapiens" and moduleMethod == "igraph:fast greedy"') 

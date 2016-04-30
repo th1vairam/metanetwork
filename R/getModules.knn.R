@@ -26,6 +26,9 @@ library(data.table)
 # Needs the dev branch
 library(githubr)
 
+# Source related R functions into global environment
+source('nested.kmeans.all.R')
+
 # Login to synapse
 key = read.table('/shared/synapseAPIToken')
 synapseLogin(username = 'th_vairam',
@@ -60,11 +63,11 @@ load(NET_OBJ@filePath)
 g = igraph::graph.adjacency(as(bicNetworks$rankConsensus$network, 'dMatrix'), 
                             mode = 'upper', weighted = T, diag = F)
 el = igraph::as_data_frame(g, what = 'edges')
-g <- graph.data.frame(el, directed = F)
+g1 <- graph.data.frame(el, directed = F)
 gc()
 
 # Get modules
-mod.output = MEGENA::nested.kmeans.all(g)
+mod.output = nested.kmeans.all(g)
 names(mod.output$modules) = 1:length(mod.output$modules)
 mod.output$modules[['0']] =  unlist(mod.output$singletons)
 geneModules = mod.output$modules %>%
@@ -73,11 +76,6 @@ geneModules = mod.output$modules %>%
   dplyr::rename(EnsembleID = DF) %>%
   dplyr::select(-x)
 gc()
-
-# Add in missing nodes from the algorithm to grey module
-geneModules = rbindlist(list(geneModules,
-                             data.frame(EnsembleID = setdiff(V(g)$name, geneModules$EnsembleID),
-                                        moduleNumber = 0)), use.names=T)
 
 mod = as.numeric(geneModules$moduleNumber)
 names(mod) = geneModules$EnsembleID
