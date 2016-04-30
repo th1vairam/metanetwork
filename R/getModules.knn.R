@@ -64,7 +64,7 @@ g <- graph.data.frame(el, directed = F)
 gc()
 
 # Get modules
-mod.output = MEGENA::nested.kmeans.all(g, single.size = 20, k.max = 50)
+mod.output = MEGENA::nested.kmeans.all(g)
 names(mod.output$modules) = 1:length(mod.output$modules)
 mod.output$modules[['0']] =  unlist(mod.output$singletons)
 geneModules = mod.output$modules %>%

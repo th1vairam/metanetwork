@@ -50,7 +50,7 @@ for(j in 1:length(mod.methods)){
     fp = file (paste('/shared/Github/metanetwork/R/sgeModuleSubmissions/SUB',FNAME,mod.methods[j],sep='.'), "w+")
     cat('#!/bin/bash', 
         'sleep 30', 
-        paste('Rscript /shared/Github/metanetwork/R/getModules.R',id,FNAME,mod.methods[j]), 
+        paste('Rscript /shared/Github/metanetwork/R/getModules.knn.R',id,FNAME,mod.methods[j]), 
         file = fp,
         sep = '\n')
     close(fp)
