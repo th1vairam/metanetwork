@@ -55,7 +55,8 @@ FNAME = paste(args[2],args[3],sep='.')
 load(NET_OBJ@filePath)
 
 # Convert lsparseNetwork to igraph graph object
-g = igraph::graph.adjacency(bicNetworks$rankConsensus$network, mode = 'upper', weighted = T, diag = F)
+g = igraph::graph.adjacency(as(bicNetworks$rankConsensus$network, 'dMatrix'), 
+                            mode = 'upper', weighted = T, diag = F)
 gc()
 
 # Get modules
