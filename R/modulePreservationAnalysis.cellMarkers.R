@@ -1,146 +1,109 @@
+#!usr/bin/env Rscript
+
 #### Code to delploy module preservation analysis ####
 # reference: cell type markers
-# test: rank consensus network across different sparsity and sparrow2Bonferroni networks from different methods
-
-## It is assumed your working directory is where this file is
-
-setwd('/home/ec2-user/Work/Github/metanetwork/R')
+# test: rank consensus based on bic criteria
 
 # Clear R console screen output
-cat("\014")  
+cat("\014")
 
-# Load require libraries
-library(synapseClient)
-library(data.table)
-library(igraph)
-library(org.Hs.eg.db)
-library(annotate)
-library(tools)
-library(biomaRt)
-library(rGithubClient)
-library(WGCNA)
+# Set library and working directory
+.libPaths('/shared/rlibs')
+setwd('/shared/Github/metanetwork/R')
+
+# Load libraries
+library(plyr)
 library(dplyr)
-library(RColorBrewer)
-library(ggplot2)
-library(knitr)
-library(stringr)
+library(synapseClient)
 
 # Login to synapse
-synapseLogin()
+key = read.table('/shared/synapseAPIToken')
+synapseLogin(username = 'th_vairam',
+             apiKey = key$V1)
 
-#### Download expression data ####
-EXP_ID = 'syn4259377'
-EXP = fread(synGet(EXP_ID)@filePath, data.table = F, header=T)
+#### Get all the completed networks and modules ####
+# Get BIC networks
+network.files = synQuery('select * from file where projectId == "syn5584871" and analysisType == "statisticalNetworkReconstruction" and method == "bic" and organism == "HomoSapiens"') %>%
+  dplyr::filter(file.cogdx == 1 | file.disease == 'Control') %>%
+  dplyr::mutate(uniqueName = paste(file.disease, file.tissueTypeAbrv, file.study, file.cogdx, sep = '.'))
 
-#### Download expression data ####
-COV_ID = 'syn4259379'
-COVARIATES = fread(synGet(COV_ID)@filePath, data.table = F, header = T)
-COVARIATES = split(COVARIATES, COVARIATES$cogdx)
-
-#### Separate expression based on cogdx ####
-exp = lapply(COVARIATES, function(x,EXP) { x = EXP[, colnames(EXP) %in% x$SampleID]; x = cbind(EXP[,'ensembl_gene_id', drop=F],x)}, EXP)
-exp = exp[c(4,2,1)]
-names(exp) = c("AD","MCI","NCI")
-collectGarbage()
+# Get finished modules
+module.files = synQuery('select * from file where projectId == "syn5584871" and analysisType == "moduleIdentification" and method == "bic" and organism == "HomoSapiens"')  %>%
+  dplyr::filter(file.cogdx == 1 | file.disease == 'Control') %>%
+  dplyr::mutate(uniqueName = paste(file.disease, file.tissueTypeAbrv, file.study, file.cogdx, sep = '.'))
 
 #### Get reference network: cell type markers ####
 # Download AD related gene sets from synapse
 GL_OBJ = synGet('syn4893059');
 load(GL_OBJ@filePath) # this will load a list named GeneSets
 
-# Get human related mapping
+# Convert hgnc_symbols to ensembl gene ids (also select cell types only)
 Hs = useMart("ENSEMBL_MART_ENSEMBL", host="www.ensembl.org") # use this one when biomart.org is down
 Hs = useDataset("hsapiens_gene_ensembl", Hs)
-NGeneSets = lapply(GeneSets[grep('Zhang',names(GeneSets),value=T)], function(x, Hs){  
+GeneSets = lapply(GeneSets[grep('Zhang',names(GeneSets),value=T)], function(x, Hs){
   human_ensg2symbol = getBM(attributes = c("ensembl_gene_id","hgnc_symbol"),
                             filters = "hgnc_symbol",                         
                             values = x,
                             mart = Hs)
   return(human_ensg2symbol[,'ensembl_gene_id'])
 }, Hs)
+ref.g = lapply(GeneSets, function(x){
+  adjMat = matrix(rep(1, length(x) * length(x)), length(x), length(x))
+  rownames(adjMat) = x; colnames(adjMat) = x
+  igraph::graph.adjacency(adjMat, mode = 'undirected', diag = F)
+})
+ref.gg = do.call(union, ref.g)
 
+ref.mod = lapply(GeneSets, function(x){
+  x = data.frame(EnsembleID = x)
+}) %>% 
+  rbindlist(idcol = 'moduleLabel') %>%
+  dplyr::mutate(moduleNumber = as.numeric(factor(moduleLabel)))
+  
 # Download adjacency matrices from synapse
-Data.Files1 = synQuery('select * from file where projectId=="syn2397881" and fileType == "rda" and method == "rankconsensus" and sparsityMethod != "correlationBonferroni" and sparsityMethod != "correlationFDR" and sparsityMethod != "wgcna"')
-Data.Files2 = synQuery('select * from file where projectId=="syn2397881" and fileType == "rda" and sparsityMethod == "sparrow2Bonferroni" and method != "correlationBonferroni" and method != "correlationFDR" and sparsityMethod != "wgcna"')
-Data.Files = unique(rbind(Data.Files1, Data.Files2))
-rownames(Data.Files) = paste(Data.Files$file.method, Data.Files$file.sparsityMethod, Data.Files$file.disease, sep='.')
-
-# Download modules from synapse
-Module.Files1 = synQuery('select * from file where projectId=="syn2397881" and fileType == "tsv" and method == "rankconsensus" and moduleMethod == "igraph:fast_greedy" and sparsityMethod != "correlationBonferroni" and sparsityMethod != "correlationFDR"')
-Module.Files2 = synQuery('select * from file where projectId=="syn2397881" and fileType == "tsv" and sparsityMethod == "sparrow2Bonferroni" and moduleMethod == "igraph:fast_greedy" and method != "correlationBonferroni" and method != "correlationFDR"')
-Module.Files = rbind(Module.Files1, Module.Files2)
-Module.Files = unique(Module.Files[grep('Modules',Module.Files$file.name),])
-rownames(Module.Files) = paste(Module.Files$file.method, Module.Files$file.sparsityMethod, Module.Files$file.disease, sep='.')
-collectGarbage()
-
-# Generate submission scripts for each comaprison
-for (name in rownames(Data.Files)){
-  # Download test adjacency matrix and formulate an igraph object
-  load(synGet(Data.Files[name,'file.id'])@filePath)
+fileNames = intersect(network.files$uniqueName, module.files$uniqueName)
+fileNames = fileNames[3]
+for (file.name in fileNames){
+  # Get network from synapse (rda format)
+  net.obj = network.files$file.id[network.files$uniqueName == file.name] %>%
+    synGet
   
-  # Download test modules
-  testModLabels = fread(synGet(Module.Files[name,'file.id'])@filePath, data.table=F, header=T)
+  # Load bic networks
+  load(net.obj@filePath)
+  
+  # Convert lsparseNetwork to igraph graph object
+  test.g = igraph::graph.adjacency(as(bicNetworks$rankConsensus$network, 'dMatrix'), 
+                              mode = 'upper', diag = F)
+  gc()
+  
+  # Get test modules from synapse (tsv format)
+  ind = which(module.files$uniqueName == file.name)
+  for (j in 1:length(ind)){
+    test.mod.obj = module.files$file.id[ind[j]] %>%
+      synGet
     
-  # Get test expression data
-  testExp = exp[[Data.Files[name,'file.disease']]]
+    test.mod = read.table(test.mod.obj@filePath, header=T, sep = '\t')
     
-  # Create folder to save files
-  folderName = paste(Data.Files[name,c('file.method','file.sparsityMethod','file.disease')], collapse='_')
-  folderName = paste(getwd(), 
-                     paste('cellMarkers','as_ref',folderName,'as_test',sep='_'), 
-                     sep='/')
-  system(paste('mkdir',folderName))
+    # Perform module preservation analysis
+    results = lapply(unique(ref.mod$moduleLabel), modPreservStats, ref.gg, test.g, ref.mod, test.mod) %>%
+      rbindlist
     
-  # Package actual data and submit them to sge
-  netData.test = list(testNet = sparseNetwork, testModLabels = testModLabels, testExp = testExp)                                    
-  save(list = 'netData.test', file = paste(folderName, 'testInput.RData',sep='/'))
-  collectGarbage()
-  
-  # Track all subission scripts in one shell script
-  fp_all = file(paste0(folderName, '/allSubmissions.sh'),'w')    
-  cat('#!/bin/bash',file=fp_all,sep='\n')
-  close(fp_all)
-  
-  # Create main submission script
-  fp = file (paste0(folderName,'/Main.sh'), "w")
-  cat('#!/bin/bash',
-      'sleep 30',
-      paste('Rscript','/home/ec2-user/Work/Github/metanetwork/R/modulePreservationAnalysis.SGE.R','testInput.RData',folderName,'Main'),
-      file = fp,
-      sep = '\n')
-  close(fp)
-  
-  # Add submission script to allSubmission list
-  fp_all = file(paste0(folderName, '/allSubmissions.sh'),'a+')
-  cat(paste('qsub','-cwd','-V',paste(folderName,'Main.sh',sep='/'),
-            '-o',paste(folderName,'Main.o',sep='/'),
-            '-e',paste(folderName,'Main.e',sep='/'),
-            '-l mem=7GB'),
-      file=fp_all,
-      sep='\n')
-  close(fp_all)
-  
-  # Create random networks for sge submission
-  for (i in 101:150){
-    # Create main submission script
-    fp = file (paste(folderName, paste('Rand',i,'sh',sep='.'),sep='/'), "w")
-    cat('#!/bin/bash',
-        'sleep 30',
-        paste('Rscript','/home/ec2-user/Work/Github/metanetwork/R/modulePreservationAnalysis.SGE.R',paste(folderName, 'testInput.RData',sep='/'),folderName,paste('Rand',i,sep='.')),
-        file = fp,
-        sep = '\n')
-    close(fp)
+    # Create module analysis folders in synapse
+    fold.obj = Folder(name = 'Module Analysis', parentId = getParentEntity(test.mod.obj@properties$parentId)@properties$id)
+    fold.obj = synStore(fold.obj)
     
-    # Add submission script to allSubmission list
-    fp_all = file(paste0(folderName, '/allSubmissions.sh'),'a+')
-    cat(paste('qsub','-cwd','-V',paste(folderName, paste('Rand',i,'sh',sep='.'),sep='/'),
-              '-o',paste(folderName, paste('Rand',i,'o',sep='.'),sep='/'),
-              '-e',paste(folderName, paste('Rand',i,'e',sep='.'),sep='/'),
-              '-l mem=7GB'),
-        file=fp_all,
-        sep='\n')
-    close(fp_all)
+    # Write results to synapse
+    write.table(results, 
+                file = paste(file.name, test.mod.obj@annotations$moduleMethod, 'tsv', sep = '.'), 
+                sep = '\t', row.names = F, quote=F)
+    file.obj = File(paste(file.name, test.mod.obj@annotations$moduleMethod, 'tsv', sep = '.'),
+                    name = test.mod.obj@properties$name,
+                    parentId = fold.obj@properties$id)
+    annotations(file.obj) =annotations(test.mod.obj)
+    file.obj@annotations$analysisType = "modulePreservationAnalysis"
+    file.obj@annotations$modularity = NULL
+    file.obj = synStore(file.obj, used = c(test.mod.obj$properties$id, 'syn4893059', net.obj@properties$id),
+                        activityName = 'Module Preservation Analysis')
+    writeLines(paste(file.name, test.mod.obj@annotations$moduleMethod))
   }
-
-  
 }
