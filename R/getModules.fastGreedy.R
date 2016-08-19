@@ -7,8 +7,9 @@ args = commandArgs(TRUE)
 # Clear R console screen output
 cat("\014")
 
-# Clear R workspace
-setwd('/home/ec2-user/Work/Github/metanetwork/R')
+# Set library and working directory
+.libPaths('/shared/rlibs')
+setwd('/shared/Github/metanetwork/R')
 
 # Load libraries
 library(synapseClient)
@@ -17,23 +18,29 @@ library(WGCNA)
 library(tools)
 library(stringr)
 library(igraph)
+library(CovariateAnalysis)
 
 # Needs the dev branch
-library(rGithubClient)
+library(githubr)
 
-# login to synapse
-synapseLogin()
+# Login to synapse
+key = read.table('/shared/synapseAPIToken')
+synapseLogin(username = 'th_vairam',
+             apiKey = key$V1)
 
 # Get github links for provenance
-thisFileName = 'getModules.fastGreedy.R'
+thisFileName1 = 'makeModuleSubmissionScripts.R'
+thisFileName2 = 'getModules.fastGreedy.R'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/metanetwork", 
                     ref="branch", 
                     refName='modules')
 
-thisFile <- getPermlink(repository = thisRepo,
-                        repositoryPath=paste0('R/', thisFileName))
+thisFile1 <- getPermlink(repository = thisRepo,
+                         repositoryPath=paste0('R/', thisFileName1))
+thisFile2 <- getPermlink(repository = thisRepo,
+                         repositoryPath=paste0('R/', thisFileName2))
 
 # Synapse specific parameters
 activityName = 'Module Identification'
@@ -41,42 +48,49 @@ activityDescription = 'Clustering network genes in to modules using fast greedy 
 
 # Get network from synapse (rda format)
 NET_OBJ = synapseClient::synGet(args[1])
-FNAME = tools::file_path_sans_ext(NET_OBJ$properties$name)
-parentId = NET_OBJ$properties$parentId
+FNAME = args[2]
+#tools::file_path_sans_ext(NET_OBJ$properties$name) %>%
+#  gsub('Networks','Modules',.)
 
-# Load sparse network
+# Load bic networks
 load(NET_OBJ@filePath)
 
 # Convert lsparseNetwork to igraph graph object
-g = igraph::graph.adjacency(sparseNetwork, mode = 'undirected', weighted = T, diag = F)
+g = igraph::graph.adjacency(bicNetworks$rankConsensus$network, mode = 'upper', weighted = T, diag = F)
+gc()
 
 # Get modules using fast.greedy method (http://arxiv.org/abs/cond-mat/0408187)
 mod = igraph::fastgreedy.community(g)
-collectGarbage()
+gc()
 
 # Get individual clusters from the igraph community object
-clust.numLabels = igraph::membership(mod)
-collectGarbage()
+geneModules = igraph::membership(mod) %>% unclass %>%
+  CovariateAnalysis::rownameToFirstColumn('EnsembleID') %>%
+  dplyr::rename(moduleNumber = DF)
+
+filteredModules = geneModules %>% 
+  group_by(moduleNumber) %>%
+  summarise(counts = n()) %>%
+  filter(counts >= 20)
+
+geneModules$moduleNumber[!(geneModules$moduleNumber %in% filteredModules$moduleNumber)] = 0
 
 # Change cluster number to color labels
-labels = WGCNA::labels2colors(clust.numLabels)
-
-# Get results
-geneModules = data.frame(GeneIDs = V(g)$name,
-                         moduleNumber = as.numeric(clust.numLabels), 
-                         modulelabels = labels)
+geneModules$moduleLabel = WGCNA::labels2colors(geneModules$moduleNumber)
 
 # Write results to synapse
-algo = str_replace_all(algorithm(mod), '[^[:alnum:]]', '_')
+# Create a folder for module results
+obj = Folder(name = 'Modules', parentId = NET_OBJ$properties$parentId)
+obj = synStore(obj)
 
-write.table(geneModules, paste(FNAME,algo,'tsv',sep='.'), sep='\t', row.names=F, quote=F)
-MOD_OBJ = File(paste(FNAME,algo,'tsv',sep='.'), name = paste(FNAME,algo,'Modules'), parentId = parentId)
+write.table(geneModules, paste(FNAME,'tsv',sep='.'), sep='\t', row.names=F, quote=F)
+MOD_OBJ = File(paste(FNAME,'tsv',sep='.'), name = 'BIC Rank Consensus', parentId = obj$properties$id)
 annotations(MOD_OBJ) = annotations(NET_OBJ)
 MOD_OBJ@annotations$fileType = 'tsv'
-MOD_OBJ@annotations$moduleMethod = paste('igraph',algo,sep=':')
+MOD_OBJ@annotations$moduleMethod = paste('igraph',algorithm(mod),sep=':')
 MOD_OBJ@annotations$modularity = modularity(mod)
 MOD_OBJ = synStore(MOD_OBJ, 
-                   executed = thisFile,
+                   executed = list(thisFile1, thisFile2),
                    used = NET_OBJ,
                    activityName = activityName,
                    activityDescription = activityDescription)
